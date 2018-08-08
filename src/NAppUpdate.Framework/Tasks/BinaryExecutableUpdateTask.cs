@@ -99,7 +99,6 @@ namespace NAppUpdate.Framework.Tasks
 
 			if (!File.Exists(Path.Combine(destDir, "restart.bat")))
 			{
-				File.Create("restart.bat");
 				File.WriteAllText("restart.bat", "sleep 5 \r\n", Encoding.UTF8);
 			}
 
