@@ -12,13 +12,8 @@ namespace NAppUpdate.Framework.Tasks
 	[UpdateTaskAlias("binaryUpdate")]
 	public class BinaryExecutableUpdateTask : UpdateTaskBase
 	{
-		[NauField("localPath", "The local path of the file to update", true)]
-		public string LocalPath { get; set; }
-
-		[NauField("updateTo",
-			"File name on the remote location; same name as local path will be used if left blank"
-			, false)]
-		public string UpdateTo { get; set; }
+		[NauField("fileName", "The path of the file to update", true)]
+		public string FileName { get; set; }
 
 		[NauField("sha256-checksum", "SHA-256 checksum to validate the file after download (optional)", false)]
 		public string Sha256Checksum { get; set; }
@@ -27,30 +22,20 @@ namespace NAppUpdate.Framework.Tasks
 
 		public override void Prepare(IUpdateSource source)
 		{
-			if (string.IsNullOrEmpty(LocalPath))
+			if (string.IsNullOrEmpty(FileName))
 			{
 				UpdateManager.Instance.Logger.Log(Logger.SeverityLevel.Warning, "FileUpdateTask: LocalPath is empty, task is a noop");
 				return; // Errorneous case, but there's nothing to prepare to, and by default we prefer a noop over an error
 			}
 
-			string fileName;
-			if (!string.IsNullOrEmpty(UpdateTo))
-			{
-				fileName = UpdateTo;
-			}
-			else
-			{
-				fileName = LocalPath;
-			}
-
 			_tempFile = null;
 
 			string baseUrl = UpdateManager.Instance.BaseUrl;
-			string tempFileLocal = Path.Combine(UpdateManager.Instance.Config.TempFolder, Guid.NewGuid().ToString());
+			string tempFileLocal = Path.Combine(UpdateManager.Instance.Config.TempFolder, FileName);
 
-			UpdateManager.Instance.Logger.Log("FileUpdateTask: Downloading {0} with BaseUrl of {1} to {2}", fileName, baseUrl, tempFileLocal);
+			UpdateManager.Instance.Logger.Log("FileUpdateTask: Downloading {0} with BaseUrl of {1} to {2}", FileName, baseUrl, tempFileLocal);
 
-			if (!source.GetData(fileName, baseUrl, OnProgress, ref tempFileLocal))
+			if (!source.GetData(FileName, baseUrl, OnProgress, ref tempFileLocal))
 				throw new UpdateProcessFailedException("FileUpdateTask: Failed to get file from source");
 
 			_tempFile = tempFileLocal;
@@ -64,13 +49,13 @@ namespace NAppUpdate.Framework.Tasks
 					throw new UpdateProcessFailedException(string.Format("FileUpdateTask: Checksums do not match; expected {0} but got {1}", Sha256Checksum, checksum));
 			}
 
-			_destinationFile = Path.Combine(Path.GetDirectoryName(UpdateManager.Instance.ApplicationPath), LocalPath);
+			_destinationFile = Path.Combine(Path.GetDirectoryName(UpdateManager.Instance.ApplicationPath), FileName);
 			UpdateManager.Instance.Logger.Log("FileUpdateTask: Prepared successfully; destination file: {0}", _destinationFile);
 		}
 
 		public override TaskExecutionStatus Execute(bool coldRun)
 		{
-			if (string.IsNullOrEmpty(LocalPath))
+			if (string.IsNullOrEmpty(FileName))
 			{
 				UpdateManager.Instance.Logger.Log(Logger.SeverityLevel.Warning, "FileUpdateTask: LocalPath is empty, task is a noop");
 				return TaskExecutionStatus.Successful; // Errorneous case, but there's nothing to prepare to, and by default we prefer a noop over an error
@@ -85,12 +70,12 @@ namespace NAppUpdate.Framework.Tasks
 			// Create a backup copy if target exists
 			if (_backupFile == null && File.Exists(_destinationFile))
 			{
-				if (!Directory.Exists(Path.GetDirectoryName(Path.Combine(UpdateManager.Instance.Config.BackupFolder, LocalPath))))
+				if (!Directory.Exists(Path.GetDirectoryName(Path.Combine(UpdateManager.Instance.Config.BackupFolder, FileName))))
 				{
-					string backupPath = Path.GetDirectoryName(Path.Combine(UpdateManager.Instance.Config.BackupFolder, LocalPath));
+					string backupPath = Path.GetDirectoryName(Path.Combine(UpdateManager.Instance.Config.BackupFolder, FileName));
 					Utils.FileSystem.CreateDirectoryStructure(backupPath, false);
 				}
-				_backupFile = Path.Combine(UpdateManager.Instance.Config.BackupFolder, LocalPath);
+				_backupFile = Path.Combine(UpdateManager.Instance.Config.BackupFolder, FileName);
 				File.Copy(_destinationFile, _backupFile, true);
 			}
 
@@ -99,10 +84,11 @@ namespace NAppUpdate.Framework.Tasks
 
 			if (!File.Exists(Path.Combine(destDir, "restart.bat")))
 			{
-				File.WriteAllText("restart.bat", "sleep 5 \r\n", Encoding.UTF8);
+				File.WriteAllText("restart.bat", $@"ping 127.0.0.1 -n 6 > nul {Environment.NewLine}");
 			}
 
-			File.AppendAllText("restart.bat", $"xcopy /x /y {_backupFile} {_destinationFile} \r\n");
+			File.AppendAllText("restart.bat", $@"robocopy {Path.GetDirectoryName(_tempFile)} " + 
+			                                  $@"{Path.GetDirectoryName(_destinationFile)} {Path.GetFileName(_destinationFile)} /it /is {Environment.NewLine}");
 
 			return TaskExecutionStatus.Successful;
 		}

@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System;
+using System.Linq;
 using System.Threading;
 using NAppUpdate.Framework.Common;
 using NAppUpdate.Framework.FeedReaders;
@@ -334,6 +335,12 @@ namespace NAppUpdate.Framework
 			if (IsWorking)
 				throw new InvalidOperationException("Another update process is already in progress");
 
+			if (UpdatesToApply.Any(upd => upd.GetType() == typeof(BinaryExecutableUpdateTask)))
+			{
+				throw new InvalidOperationException("One of update task has type of \"BinaryExecutableUpdateTask\", you should " +
+				                                    "call ApplyUpdatesEx method instead");
+			}
+
 			lock (UpdatesToApply)
 			{
 				using (WorkScope.New(isWorking => IsWorking = isWorking))
@@ -484,6 +491,127 @@ namespace NAppUpdate.Framework
 
 					State = UpdateProcessState.AppliedSuccessfully;
 					UpdatesToApply.Clear();
+				}
+			}
+		}
+
+		/// <summary>
+		/// Applies updates that should be done
+		/// </summary>
+		/// <param name="exeToRestart">Name of .exe that should be started after update</param>
+		public void ApplyUpdatesEx(string exeToRestart)
+		{
+			if (IsWorking)
+				throw new InvalidOperationException("Another update process is already in progress");
+
+			lock (UpdatesToApply)
+			{
+				using (WorkScope.New(isWorking => IsWorking = isWorking))
+				{
+					bool revertToDefaultBackupPath = true;
+
+					// Set current directory the the application directory
+					// this prevents the updater from writing to e.g. c:\windows\system32
+					// if the process is started by autorun on windows logon.
+					// ReSharper disable AssignNullToNotNullAttribute
+					Environment.CurrentDirectory = Path.GetDirectoryName(ApplicationPath);
+					// ReSharper restore AssignNullToNotNullAttribute
+
+					// Make sure the current backup folder is accessible for writing from this process
+					string backupParentPath = Path.GetDirectoryName(Config.BackupFolder) ?? string.Empty;
+					if (Directory.Exists(backupParentPath) && PermissionsCheck.HaveWritePermissionsForFolder(backupParentPath))
+					{
+						// Remove old backup folder, in case this same folder was used previously,
+						// and it wasn't removed for some reason
+						try
+						{
+							if (Directory.Exists(Config.BackupFolder))
+								FileSystem.DeleteDirectory(Config.BackupFolder);
+							revertToDefaultBackupPath = false;
+						}
+						catch (UnauthorizedAccessException)
+						{
+						}
+
+						// Attempt to (re-)create the backup folder
+						try
+						{
+							Directory.CreateDirectory(Config.BackupFolder);
+
+							if (!PermissionsCheck.HaveWritePermissionsForFolder(Config.BackupFolder))
+								revertToDefaultBackupPath = true;
+						}
+						catch (UnauthorizedAccessException)
+						{
+							// We're having permissions issues with this folder, so we'll attempt
+							// using a backup in a default location
+							revertToDefaultBackupPath = true;
+						}
+					}
+
+					if (revertToDefaultBackupPath)
+					{
+						Config._backupFolder = Path.Combine(
+							Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+							Config.UpdateProcessName + "UpdateBackups" + DateTime.UtcNow.Ticks);
+
+						try
+						{
+							Directory.CreateDirectory(Config.BackupFolder);
+						}
+						catch (UnauthorizedAccessException ex)
+						{
+							// We can't backup, so we abort
+							throw new UpdateProcessFailedException("Could not create backup folder " + Config.BackupFolder, ex);
+						}
+					}
+
+					if (File.Exists("restart.bat"))
+					{
+						File.Delete("restart.bat");
+					}
+
+					bool runPrivileged = false, hasColdUpdates = false;
+					State = UpdateProcessState.RollbackRequired;
+					foreach (var task in UpdatesToApply)
+					{
+						IUpdateTask t = task;
+						task.ProgressDelegate += status => TaskProgressCallback(status, t);
+
+						try
+						{
+							// Execute the task
+							task.ExecutionStatus = task.Execute(false);
+						}
+						catch (Exception ex)
+						{
+							task.ExecutionStatus = TaskExecutionStatus.Failed; // mark the failing task before rethrowing
+							throw new UpdateProcessFailedException("Update task execution failed: " + task.Description, ex);
+						}
+
+						if (task.ExecutionStatus == TaskExecutionStatus.RequiresAppRestart
+							|| task.ExecutionStatus == TaskExecutionStatus.RequiresPrivilegedAppRestart)
+						{
+							// Record that we have cold updates to run, and if required to run any of them privileged
+							runPrivileged = runPrivileged || task.ExecutionStatus == TaskExecutionStatus.RequiresPrivilegedAppRestart;
+							hasColdUpdates = true;
+							continue;
+						}
+
+						// We are being quite explicit here - only Successful return values are considered
+						// to be Ok (cold updates are already handled above)
+						if (task.ExecutionStatus != TaskExecutionStatus.Successful)
+							throw new UpdateProcessFailedException("Update task execution failed: " + task.Description);
+					}
+
+					File.AppendAllText("restart.bat", $@"START {exeToRestart} {Environment.NewLine}");
+
+					State = UpdateProcessState.AppliedSuccessfully;
+					UpdatesToApply.Clear();
+
+					Process.Start("restart.bat");
+
+					Environment.Exit(0);
 				}
 			}
 		}
