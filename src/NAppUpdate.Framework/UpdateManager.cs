@@ -31,11 +31,11 @@ namespace NAppUpdate.Framework
 			UpdateFeedReader = new NauXmlFeedReader();
 			Logger = new Logger();
 			Config = new NauConfigurations
-						{
-							TempFolder = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString()),
-							UpdateProcessName = "NAppUpdateProcess",
-							UpdateExecutableName = "foo.exe", // Naming it updater.exe seem to trigger the UAC, and we don't want that
-						};
+			{
+				TempFolder = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString()),
+				UpdateProcessName = "NAppUpdateProcess",
+				UpdateExecutableName = "foo.exe", // Naming it updater.exe seem to trigger the UAC, and we don't want that
+			};
 
 			// Need to do this manually here because the BackupFolder property is protected using the static instance, which we are
 			// in the middle of creating
@@ -150,8 +150,19 @@ namespace NAppUpdate.Framework
 						if (ShouldStop)
 							throw new UserAbortException();
 
-						if (t.UpdateConditions == null || t.UpdateConditions.IsMet(t)) // Only execute if all conditions are met
+						if (t is BinaryExecutableUpdateTask binaryTask)
+						{
+							binaryTask.Prepare(UpdateSource);
+							if (binaryTask.ShouldUpdate())
+							{
+								UpdatesToApply.Add(t);
+							}
+						}
+						else if (t.UpdateConditions == null || t.UpdateConditions.IsMet(t) // Only execute if all conditions are met
+						)
+						{
 							UpdatesToApply.Add(t);
+						}
 					}
 				}
 
@@ -338,7 +349,7 @@ namespace NAppUpdate.Framework
 			if (UpdatesToApply.Any(upd => upd.GetType() == typeof(BinaryExecutableUpdateTask)))
 			{
 				throw new InvalidOperationException("One of update task has type of \"BinaryExecutableUpdateTask\", you should " +
-				                                    "call ApplyUpdatesEx method instead");
+													"call ApplyUpdatesEx method instead");
 			}
 
 			lock (UpdatesToApply)
@@ -440,27 +451,27 @@ namespace NAppUpdate.Framework
 					if (hasColdUpdates)
 					{
 						var dto = new NauIpc.NauDto
-									{
-										Configs = Instance.Config,
-										Tasks = Instance.UpdatesToApply,
-										AppPath = ApplicationPath,
-										WorkingDirectory = Environment.CurrentDirectory,
-										RelaunchApplication = relaunchApplication,
-										LogItems = Logger.LogItems,
-									};
+						{
+							Configs = Instance.Config,
+							Tasks = Instance.UpdatesToApply,
+							AppPath = ApplicationPath,
+							WorkingDirectory = Environment.CurrentDirectory,
+							RelaunchApplication = relaunchApplication,
+							LogItems = Logger.LogItems,
+						};
 
 						NauIpc.ExtractUpdaterFromResource(Config.TempFolder, Instance.Config.UpdateExecutableName);
 
 						var info = new ProcessStartInfo
-									{
-										UseShellExecute = true,
-										WorkingDirectory = Environment.CurrentDirectory,
-										FileName = Path.Combine(Config.TempFolder, Instance.Config.UpdateExecutableName),
-										Arguments =
+						{
+							UseShellExecute = true,
+							WorkingDirectory = Environment.CurrentDirectory,
+							FileName = Path.Combine(Config.TempFolder, Instance.Config.UpdateExecutableName),
+							Arguments =
 											string.Format(@"""{0}"" {1} {2}", Config.UpdateProcessName,
 														  updaterShowConsole ? "-showConsole" : string.Empty,
 														  updaterDoLogging ? "-log" : string.Empty),
-									};
+						};
 
 						if (!updaterShowConsole)
 						{
