@@ -5,6 +5,7 @@ using System;
 using System.Linq;
 using System.Threading;
 using NAppUpdate.Framework.Common;
+using NAppUpdate.Framework.Conditions;
 using NAppUpdate.Framework.FeedReaders;
 using NAppUpdate.Framework.Sources;
 using NAppUpdate.Framework.Tasks;
@@ -158,10 +159,20 @@ namespace NAppUpdate.Framework
 								UpdatesToApply.Add(t);
 							}
 						}
-						else if (t.UpdateConditions == null || t.UpdateConditions.IsMet(t) // Only execute if all conditions are met
-						)
+						else if (t.UpdateConditions == null || t.UpdateConditions.IsMet(t)) // Only execute if all conditions are met
 						{
-							UpdatesToApply.Add(t);
+							if (t is FileUpdateTask filetask && filetask.UpdateConditions.ChildConditions.Any(c => c._Condition is FileDateCondition))
+							{
+								filetask.Prepare(UpdateSource);
+								if (filetask.ShouldUpdate(UpdateSource))
+								{
+									UpdatesToApply.Add(t);
+								}
+							}
+							else
+							{
+								UpdatesToApply.Add(t);
+							}
 						}
 					}
 				}

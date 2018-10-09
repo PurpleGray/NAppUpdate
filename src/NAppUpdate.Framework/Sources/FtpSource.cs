@@ -105,6 +105,39 @@ namespace NAppUpdate.Framework.Sources
 			}
 		}
 
+		public DateTime FtpGetFileTimestamp(string filePath)
+		{
+			// Create an FTP Request
+			var ftpRequest =
+				(FtpWebRequest)FtpWebRequest.Create(
+					$@"{HostUrl}{(HostUrl.EndsWith("/") ? string.Empty : "/")}{Path.Combine(feedBasePath, filePath)}");
+			ftpRequest.Credentials = credentials;
+			// Set options
+			ftpRequest.UseBinary = true;
+			ftpRequest.UsePassive = true;
+			ftpRequest.KeepAlive = true;
+			// Specify the Type of FTP Request 
+			ftpRequest.Method = WebRequestMethods.Ftp.GetDateTimestamp;
+			
+			try
+			{
+				using (FtpWebResponse response =
+					(FtpWebResponse)ftpRequest.GetResponse())
+				{
+					// Return the size.
+					return response.LastModified;
+				}
+			}
+			catch (Exception ex)
+			{
+				// If the file doesn't exist, return Jan 1, 3000.
+				// Otherwise rethrow the error.
+				if (ex.Message.Contains("File unavailable"))
+					return DateTime.MinValue;
+				throw;
+			}
+		}
+
 		#region IUpdateSource Members
 
 		public String GetUpdatesFeed()

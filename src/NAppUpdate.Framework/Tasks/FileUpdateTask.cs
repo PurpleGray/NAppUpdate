@@ -1,7 +1,9 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Threading;
 using NAppUpdate.Framework.Common;
+using NAppUpdate.Framework.Sources;
 using NAppUpdate.Framework.Utils;
 
 namespace NAppUpdate.Framework.Tasks
@@ -28,6 +30,19 @@ namespace NAppUpdate.Framework.Tasks
 
 		private string _destinationFile, _backupFile, _tempFile;
 
+		public bool ShouldUpdate(Sources.IUpdateSource source)
+		{
+			var localModifiedTime = File.GetLastWriteTime(LocalPath);
+			var remoteModifiedTime = DateTime.MinValue;
+			
+			if (source is FtpSource ftpSource)
+			{
+				remoteModifiedTime = ftpSource.FtpGetFileTimestamp(UpdateTo);
+			}
+			
+			return remoteModifiedTime > localModifiedTime;
+		}
+		
 		public override void Prepare(Sources.IUpdateSource source)
 		{
 			if (string.IsNullOrEmpty(LocalPath))
